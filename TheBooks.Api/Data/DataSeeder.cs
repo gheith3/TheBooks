@@ -74,23 +74,14 @@ public static class DataSeeder
         }
     }
 
-    private static async Task SeedUsersRoles(AppDbContext context, IServiceProvider serviceProvider)
-    {
-        Console.WriteLine("start users roles seed");
-        var roleManager = serviceProvider.GetRequiredService<RoleManager<IdentityRole>>();
-        if (!roleManager.RoleExistsAsync(AppUsersRoles.Root).Result)
+        private static async Task SeedUsersRoles(AppDbContext context, IServiceProvider serviceProvider)
         {
-            await roleManager.CreateAsync(new IdentityRole(AppUsersRoles.Root));
+            Console.WriteLine("start users roles seed");
+            var roleManager = serviceProvider.GetRequiredService<RoleManager<IdentityRole>>();
+            var roles = AppUsersRoles.GetRolesList();
+            foreach (var role in roles.Where(role => !roleManager.RoleExistsAsync(role).Result))
+            {
+                await roleManager.CreateAsync(new IdentityRole(role));
+            }
         }
-
-        if (!roleManager.RoleExistsAsync(AppUsersRoles.Admin).Result)
-        {
-            await roleManager.CreateAsync(new IdentityRole(AppUsersRoles.Admin));
-        }
-
-        if (!roleManager.RoleExistsAsync(AppUsersRoles.User).Result)
-        {
-            await roleManager.CreateAsync(new IdentityRole(AppUsersRoles.User));
-        }
-    }
 }
