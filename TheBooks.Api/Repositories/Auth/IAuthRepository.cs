@@ -10,4 +10,5 @@ public interface IAuthRepository
     Task<ApiResponse<LoginResponseDto>> Login(UserLoginDto request);
     Task<ApiResponse<LoginResponseDto>> RefreshLogin(string refreshToken);
     Task<ApiResponse<bool>> ResetPassword(ResetPasswordDto request);
+    Task<ApiResponse<bool>> AssignRoles(AssignRolesToUserDto request);
 }

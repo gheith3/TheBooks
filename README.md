@@ -774,3 +774,219 @@ you should get the following endpoints
 - /api/Auth/login
 - /api/Auth/refresh-login
 - /api/Auth/reset-password
+
+Step 12: Add Roles
+
+inside helper folder create AppRoles.cs
+
+```
+namespace TheBooks.Api.Helpers;
+
+public class AppUsersRoles
+{
+    public const string Root = "Root";
+    public const string Admin = "Admin";
+    public const string User = "User";
+    
+    public static List<string> GetRolesList()
+    {
+        return new List<string>
+        {
+            Root,
+            Admin,
+            User,
+        };
+    }
+}
+```
+
+create AssignRolesToUserDto inside Dto/Auth
+
+```
+using System.ComponentModel.DataAnnotations;
+
+namespace TheBooks.Api.Dto.Auth;
+
+public class AssignRolesToUserDto
+{
+    [Required] public string UserId { get; set; } = string.Empty;
+    [Required] public List<string> Roles { get; set; }
+}
+```
+
+add new method to IAuthRepository
+```
+Task<ApiResponse<bool>> AssignRoles(AssignRolesToUserDto request);
+```
+
+and implement it in AuthRepository
+```
+public async Task<ApiResponse<bool>> AssignRoles(AssignRolesToUserDto request)
+    {
+        var response = new ApiResponse<bool>();
+        try
+        {
+            var user = await context.Users.FindAsync(request.UserId);
+            if (user == null)
+            {
+                throw new AppException("User is not found", 101);
+            }
+
+            var roles = AppUsersRoles.GetRolesList();
+            var correctRoles = request.Roles
+                .Where(r => roles.Contains(r.Humanize(LetterCasing.Title)))
+                .ToList();
+
+            var oldRoles = (await userManager.GetRolesAsync(user)).ToList();
+            correctRoles = correctRoles.Except(oldRoles).ToList();
+            var result = await userManager.AddToRolesAsync(user, correctRoles);
+
+            if (result.Succeeded)
+            {
+                response.Data = true;
+                return response;
+            }
+
+            response.Errors = result.Errors.ToDictionary(k => k.Code, v => v.Description);
+
+            return response;
+        }
+        catch (AppException exception)
+        {
+            response.StatusCode = exception.ErrorCode;
+            response.Errors.Add(exception.ErrorTitle, exception.Message);
+        }
+        catch (Exception exception)
+        {
+            if (!hostingEnvironment.IsProduction())
+            {
+                response.StatusCode = 500;
+                response.Errors.Add("server error", exception.Message);
+            }
+
+            Console.WriteLine($"Error, Message {exception.Message}");
+        }
+
+        return response;
+    }
+```
+
+add new endpoint to AuthController
+```
+    [HttpPost( "assign-roles-to-user")]
+    [Authorize(Roles = $"{AppUsersRoles.Root}|{AppUsersRoles.Root}")]
+    public async Task<ActionResult<ApiResponse<bool>>> AssignRoles([FromBody]  AssignRolesToUserDto request)
+    {
+        return await repository.AssignRoles(request);
+    }
+```
+
+before we check the endpoint we need to add roles to the database and default 
+user with root role we write the following code in DataSeeder.cs
+
+```
+using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
+using TheBooks.Api.Helpers;
+using TheBooks.Api.Model;
+
+namespace TheBooks.Api.Data;
+
+
+public static class DataSeeder
+{
+    public static async Task Initialize(IServiceProvider serviceProvider)
+    {
+        try
+        {
+            //init database, seed master data to database
+            var context = serviceProvider.GetRequiredService<AppDbContext>();
+
+            //migrate database
+            if ((await context.Database.GetPendingMigrationsAsync()).Any())
+            {
+                await context.Database.MigrateAsync();
+            }
+
+            //call seed method
+            await SeedUsersRoles(context, serviceProvider);
+            await SeedUsers(context, serviceProvider);
+        }
+        catch (Exception ex)
+        {
+            Console.Write(ex.Message);
+        }
+    }   
+    
+        private static async Task SeedUsers(AppDbContext context, IServiceProvider serviceProvider)
+    {
+        try
+        {
+            if (context.Users.Any())
+                return;
+
+            Console.WriteLine("start user seed");
+
+            var user = new AppUser
+            {
+                UserName = "root",
+                Email = "root@admin.com",
+                EmailConfirmed = true,
+                PhoneNumber = "9651254",
+                PhoneNumberConfirmed = true,
+            };
+
+            var userManager = serviceProvider.GetRequiredService<UserManager<AppUser>>();
+            var result = await userManager.CreateAsync(user, "P@ssw0rd");
+            if (result.Succeeded)
+            {
+                // Assign the "User" role to the user
+                await userManager.AddToRoleAsync(user, AppUsersRoles.Root);
+                Console.WriteLine("user seed successfully");
+                return;
+            }
+            
+            if (result.Errors.Any())
+            {
+                foreach (var e in result.Errors)
+                {
+                    Console.WriteLine($"{e.Code}    {e.Description}");
+                }
+            }
+        }
+        catch (Exception e)
+        {
+            Console.WriteLine($"Error in seeding users, {e.Message}");
+            throw;
+        }
+    }
+
+    private static async Task SeedUsersRoles(AppDbContext context, IServiceProvider serviceProvider)
+    {
+        Console.WriteLine("start users roles seed");
+        var roleManager = serviceProvider.GetRequiredService<RoleManager<IdentityRole>>();
+        if (!roleManager.RoleExistsAsync(AppUsersRoles.Root).Result)
+        {
+            await roleManager.CreateAsync(new IdentityRole(AppUsersRoles.Root));
+        }
+
+        if (!roleManager.RoleExistsAsync(AppUsersRoles.Admin).Result)
+        {
+            await roleManager.CreateAsync(new IdentityRole(AppUsersRoles.Admin));
+        }
+
+        if (!roleManager.RoleExistsAsync(AppUsersRoles.User).Result)
+        {
+            await roleManager.CreateAsync(new IdentityRole(AppUsersRoles.User));
+        }
+    }
+}
+```
+
+now you can test the api using swagger
+
+```
+dotnet watch
+```
+
+

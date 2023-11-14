@@ -4,10 +4,12 @@ using Ghak.libraries.AppBase.DTO;
 using Ghak.libraries.AppBase.Exceptions;
 using Ghak.libraries.AppBase.Extensions;
 using Ghak.libraries.AppBase.Models;
+using Humanizer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using TheBooks.Api.Data;
 using TheBooks.Api.Dto.Auth;
+using TheBooks.Api.Helpers;
 using TheBooks.Api.Model;
 
 namespace TheBooks.Api.Repositories.Auth;
@@ -259,4 +261,55 @@ public class AuthRepository(AppDbContext context,
 
         return user;
     }
+    
+    public async Task<ApiResponse<bool>> AssignRoles(AssignRolesToUserDto request)
+    {
+        var response = new ApiResponse<bool>();
+        try
+        {
+            var user = await context.Users.FindAsync(request.UserId);
+            if (user == null)
+            {
+                throw new AppException("User is not found", 101);
+            }
+
+            var roles = AppUsersRoles.GetRolesList();
+            var correctRoles = request.Roles
+                .Where(r => roles.Contains(r.Humanize(LetterCasing.Title)))
+                .ToList();
+
+            var oldRoles = (await userManager.GetRolesAsync(user)).ToList();
+            correctRoles = correctRoles.Except(oldRoles).ToList();
+            var result = await userManager.AddToRolesAsync(user, correctRoles);
+
+            if (result.Succeeded)
+            {
+                response.Data = true;
+                return response;
+            }
+
+            response.Errors = result.Errors.ToDictionary(k => k.Code, v => v.Description);
+
+            return response;
+        }
+        catch (AppException exception)
+        {
+            response.StatusCode = exception.ErrorCode;
+            response.Errors.Add(exception.ErrorTitle, exception.Message);
+        }
+        catch (Exception exception)
+        {
+            if (!hostingEnvironment.IsProduction())
+            {
+                response.StatusCode = 500;
+                response.Errors.Add("server error", exception.Message);
+            }
+
+            Console.WriteLine($"Error, Message {exception.Message}");
+        }
+
+        return response;
+    }
+
+
 }

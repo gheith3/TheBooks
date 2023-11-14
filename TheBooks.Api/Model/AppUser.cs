@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Identity;
 
 namespace TheBooks.Api.Model;
 
+
 public class AppUser : IdentityUser
 {
     public bool IsActive { get; set; } = true;
