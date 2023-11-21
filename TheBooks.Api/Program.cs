@@ -11,6 +11,7 @@ try
     // Add services to the container.
     builder.Services
         .AddHttpContextAccessor()
+        .ServicesRegistration()
         .RepositoriesRegistration()
         .AppCors()
         .AddHttpClient()

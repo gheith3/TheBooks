@@ -6,13 +6,17 @@ using Ghak.libraries.AppBase.Utils;
 using Microsoft.EntityFrameworkCore;
 using TheBooks.Api.Data;
 using TheBooks.Api.Dto.BookCollections;
+using TheBooks.Api.Helpers;
 using TheBooks.Api.Model;
+using TheBooks.Api.Services.Auth;
 
 namespace TheBooks.Api.Repositories.BookCollections;
 
 public class BookCollectionsRepository(AppDbContext context,
     IMapper mapper,
-    IHostEnvironment hostingEnvironment) : IBookCollectionsRepository
+    IHostEnvironment hostingEnvironment,
+    IAuthUserServices authUserServices) 
+    : IBookCollectionsRepository
 {
     public IQueryable<BookCollection> GetQuery()
     {
@@ -154,8 +158,8 @@ public class BookCollectionsRepository(AppDbContext context,
 
     public async Task ModifyValidation(BookCollection record, ModifyBookCollectionDto request)
     {
-        if (record.OwnerId != request.OwnerId &&
-            await context.Users.AllAsync(r => r.Id != request.OwnerId))
+        if (string.IsNullOrEmpty(request.OwnerId) || (record.OwnerId != request.OwnerId &&
+            await context.Users.AllAsync(r => r.Id != request.OwnerId)))
         {
             throw new AppException("user is not found",
                 101, nameof(request.OwnerId));
@@ -209,8 +213,9 @@ public class BookCollectionsRepository(AppDbContext context,
         var response = new ApiResponse<BookCollectionDto>();
         try
         {
+            request.OwnerId = await authUserServices.Id();
             await ModifyValidation(new BookCollection(), request);
-
+            
             var record = mapper.Map<BookCollection>(request);
             record.Id = Ghak.libraries.AppBase.Utils.Helpers.GetStringKey();
 
@@ -259,7 +264,6 @@ public class BookCollectionsRepository(AppDbContext context,
 
             record.UpdatedAt = DateTime.Now;
             record.Title = request.Title;
-            record.OwnerId = request.OwnerId;
             record.Description = request.Description;
 
             await SaveDbChange();

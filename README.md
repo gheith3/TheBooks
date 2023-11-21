@@ -1532,3 +1532,161 @@ public class BookCollectionsController(IBookCollectionsRepository repository)
     }
 }
 ```
+
+---
+
+at moment we get book list creator from user creation request and this is bad practice because can send another user id
+so we create new service that allow us to access current user id and we call it `IAuthUserServices` 
+and implement it in `AuthUserServices`
+
+``` 
+using Ghak.libraries.AppBase.Exceptions;
+using Microsoft.AspNetCore.Identity;
+using TheBooks.Api.Model;
+
+namespace TheBooks.Api.Services.Auth;
+
+public class AuthUserServices(IHostEnvironment hostingEnvironment,
+    UserManager<AppUser> userManager,
+    IHttpContextAccessor httpContextAccessor) : IAuthUserServices
+{
+    public async Task<AppUser> AuthUser()
+    {
+        var response = new AppUser();
+        try
+        {
+            var principal = httpContextAccessor?.HttpContext!.User;
+            if (principal == null)
+                throw new AppException("user login is not valid", 101);
+
+            var user = await userManager.GetUserAsync(principal);
+            if (user == null)
+                throw new AppException("User not found", 101);
+            
+            return user;
+        }
+        catch (Exception exception)
+        {
+            Console.WriteLine($"Error, Message {exception.Message}");
+        }
+
+        return response;
+    }
+
+    public async Task<List<string>> Roles()
+    {
+        var response = new List<string>();
+        try
+        {
+            var principal = httpContextAccessor?.HttpContext!.User;
+            if (principal == null)
+                throw new AppException("user login is not valid", 101);
+
+            var user = await userManager.GetUserAsync(principal);
+            if (user == null)
+                throw new AppException("User not found", 101);
+            return (await userManager.GetRolesAsync(user)).ToList();
+        }
+        catch (Exception exception)
+        {
+            Console.WriteLine($"Error, Message {exception.Message}");
+        }
+
+        return response;
+    }
+
+    public async Task<bool> IsInRoles(string checkRoles)
+    {
+        var response = false;
+        try
+        {
+            var roles = await Roles();
+            if (!roles.Any())
+                return response;
+            
+            checkRoles = checkRoles
+                .Replace(",", "|")
+                .Replace(";", "|")
+                .Replace(":", "|");
+            
+            var checkRolesList = checkRoles.Split("|").ToList();
+            
+            response = roles.Any(r => checkRolesList.Contains(r));
+        }
+        catch (Exception exception)
+        {
+            Console.WriteLine($"Error, Message {exception.Message}");
+        }
+
+        return response;
+    }
+    
+    public async Task<string> Id()
+    {
+        try
+        {
+            var user = await AuthUser();
+            return user.Id;
+        }
+        catch (Exception exception)
+        {
+            Console.WriteLine($"Error, Message {exception.Message}");
+        }
+
+        return string.Empty;
+    }
+}
+```
+
+then register it inside AppRegistrations.cs inside ServicesRegistration method
+```
+...
+        services.AddScoped<IAuthUserServices, AuthUserServices>();
+...
+
+```
+
+dont forget to call this function in Program.cs file
+```
+
+...
+builder.Services
+        .AddHttpContextAccessor()
+        .ServicesRegistration()
+        .RepositoriesRegistration()
+...
+
+```
+
+after that we inject `IAuthUserServices` inside `BookCollectionsRepository` and use it to get current user id
+```
+
+...
+public class BookCollectionsRepository(AppDbContext context,
+    IMapper mapper,
+    IHostEnvironment hostingEnvironment,
+    IAuthUserServices authUserServices) 
+    : IBookCollectionsRepository
+{
+...
+```
+
+and inside `Create` method we change the following 
+
+```
+...
+try
+        {
+            request.OwnerId = await authUserServices.Id();
+...
+```
+
+the last change is to add make `OwnerId` on  `ModifyBookCollectionDto` accept null value or empty string
+```
+public string? OwnerId { get; set; }
+```
+
+
+
+
+   

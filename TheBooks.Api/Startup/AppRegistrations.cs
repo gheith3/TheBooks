@@ -1,5 +1,6 @@
 using TheBooks.Api.Repositories.Auth;
 using TheBooks.Api.Repositories.BookCollections;
+using TheBooks.Api.Services.Auth;
 
 namespace TheBooks.Api.Startup;
 
@@ -14,7 +15,7 @@ public static class AppRegistrations
     
     public static IServiceCollection ServicesRegistration(this IServiceCollection services)
     {
-
+        services.AddScoped<IAuthUserServices, AuthUserServices>();
         return services;
     }
 }
