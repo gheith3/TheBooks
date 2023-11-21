@@ -12,8 +12,9 @@ public class AppDbContext: IdentityDbContext<AppUser>
         
     }
     
-    
     public DbSet<AppUserToken> AppUserTokens { get; set; }
+    public DbSet<BookCollection> BookCollections { get; set; }
+    
     
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

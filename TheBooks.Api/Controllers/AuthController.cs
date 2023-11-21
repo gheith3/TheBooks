@@ -1,15 +1,19 @@
+using AutoMapper;
 using Ghak.libraries.AppBase.DTO;
 using Ghak.libraries.AppBase.Models;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using TheBooks.Api.Dto.Auth;
 using TheBooks.Api.Helpers;
+using TheBooks.Api.Model;
 using TheBooks.Api.Repositories.Auth;
 
 namespace TheBooks.Api.Controllers;
 
 [Route("api/[controller]")]
-public class AuthController(IAuthRepository repository)
+public class AuthController(UserManager<AppUser> userManager, 
+        IAuthRepository repository, IMapper mapper)
     : ControllerBase
 {
     [HttpPost("user-register")]
@@ -23,6 +27,23 @@ public class AuthController(IAuthRepository repository)
     {
         return await repository.Login(request);
     }
+    
+    [HttpPost( "get-auth-user")]
+    [Authorize]
+    public async Task<ActionResult<AuthUserDto>> GetUser()
+    {
+        var user = await userManager.GetUserAsync(User);
+        if (user == null)
+        {
+            throw new Exception("User not found");
+        }
+        
+        var authUser = mapper.Map<AuthUserDto>(user);
+        var roles = await userManager.GetRolesAsync(user);
+        authUser.Roles = roles.ToList();
+        return Ok(authUser);
+    }
+
     
     [Authorize]
     [HttpPost("refresh-login")]

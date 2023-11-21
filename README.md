@@ -980,4 +980,555 @@ now you can test the api using swagger
 dotnet watch
 ```
 
+----
 
+create first entity
+
+1. create Modal in modals file `BookCollection`
+```
+using System.ComponentModel.DataAnnotations;
+using Ghak.libraries.AppBase.Models;
+
+namespace TheBooks.Api.Model;
+
+public class BookCollection : BaseModel
+{
+    [Required]
+    public required string OwnerId { get; set; }
+    public required AppUser Owner { get; set; }
+    
+    [Required] 
+    public required string Title { get; set; }
+    public string? Description { get; set; }
+}
+```
+
+2.  then create DTO
+```
+using Ghak.libraries.AppBase.DTO;
+namespace TheBooks.Api.Dto.BookCollections;
+public class BookCollectionDto : BaseDto
+{
+    public string OwnerId { get; set; }
+    public string Owner { get; set; }
+    public string Title { get; set; }
+    public string? Description { get; set; }
+}
+
+
+using System.ComponentModel.DataAnnotations;
+namespace TheBooks.Api.Dto.BookCollections;
+public class ModifyBookCollectionDto 
+{
+    public string? Id { get; set; }
+    [Required]
+    public string OwnerId { get; set; }
+    [Required]
+    public string Title { get; set; }
+    public string? Description { get; set; }
+}
+
+
+using Ghak.libraries.AppBase.DTO;
+namespace TheBooks.Api.Dto.BookCollections;
+public class ToModifyBookCollectionDto : BaseToModifyDto<ModifyBookCollectionDto>
+{
+    
+}
+```
+
+3.  create mapper to link between model and dto inside Mappers folder
+```
+using AutoMapper;
+using TheBooks.Api.Dto.BookCollections;
+using TheBooks.Api.Model;
+
+namespace TheBooks.Api.Mappers;
+
+public class BookCollectionMapper : Profile
+{
+    BookCollectionMapper()
+    {
+        BookCollectionMappers();
+    }
+
+    private void BookCollectionMappers()
+    {
+        CreateMap<BookCollection, BookCollectionDto>();
+        CreateMap<ModifyBookCollectionDto, BookCollection>()
+            .ReverseMap();
+    }
+}
+
+```
+
+4. add BookCollections table to database by adding it to AppDbContext
+```
+...
+public DbSet<BookCollection> BookCollections { get; set; }
+...
+```
+
+then create migration by run next command in terminal
+`dotnet ef migrations add  "create BookCollections table"`
+
+then update database
+`dotnet ef database update`
+
+now create repository for BookCollections inside Repositories folder, start by create `IBookCollectionsRepository` that
+implement `ICrudRepository` interface
+
+```
+using Ghak.libraries.AppBase.Interfaces;
+using TheBooks.Api.Dto.BookCollections;
+using TheBooks.Api.Model;
+
+namespace TheBooks.Api.Repositories.BookCollections;
+
+public interface IBookCollectionsRepository : ICrudRepository<string, BookCollection, BookCollectionDto, ModifyBookCollectionDto, ToModifyBookCollectionDto>
+{
+}
+```
+
+then create `BookCollectionsRepository` that implement `IBookCollectionsRepository`
+
+```
+using AutoMapper;
+using Ghak.libraries.AppBase.Exceptions;
+using Ghak.libraries.AppBase.Extensions;
+using Ghak.libraries.AppBase.Models;
+using Ghak.libraries.AppBase.Utils;
+using Microsoft.EntityFrameworkCore;
+using TheBooks.Api.Data;
+using TheBooks.Api.Dto.BookCollections;
+using TheBooks.Api.Model;
+
+namespace TheBooks.Api.Repositories.BookCollections;
+
+public class BookCollectionsRepository(AppDbContext context,
+    IMapper mapper,
+    IHostEnvironment hostingEnvironment) : IBookCollectionsRepository
+{
+    public IQueryable<BookCollection> GetQuery()
+    {
+        return context.BookCollections
+            .OrderByDescending(r => r.CreatedAt)
+            .AsQueryable();
+    }
+
+    public IQueryable<BookCollection> GetFilterQuery(IQueryable<BookCollection> query, string? searchQuery = null,
+        Dictionary<string, object>? filters = null)
+    {
+        if (!string.IsNullOrWhiteSpace(searchQuery))
+        {
+            query = query.Where(r =>
+                r.Title.Contains(searchQuery));
+        }
+
+        if (filters == null || !filters.Any())
+        {
+            return query;
+        }
+
+        if (filters.TryGetValue("Id", out var id))
+        {
+            query = query.Where(r => r.Id == id.ToString());
+        }
+
+        if (filters.TryGetValue("OwnerId", out var ownerId))
+        {
+            query = query.Where(r => r.OwnerId == ownerId.ToString());
+        }
+
+        return query;
+    }
+
+    public async Task<BookCollection> GetRecord(string id)
+    {
+        var record = await GetQuery()
+            .FirstOrDefaultAsync(r => r.Id == id);
+        if (record == null)
+            throw new AppException("record is not found",
+                404,
+                nameof(BookCollection));
+
+        return record;
+    }
+
+    public async Task<ApiResponse<PaginationList<BookCollectionDto>>> Pagination(PaginationListArgs request)
+    {
+        var response = new ApiResponse<PaginationList<BookCollectionDto>>();
+        try
+        {
+            var list = GetFilterQuery(GetQuery(), request.SearchQuery, request.Args);
+            var items = await list.PaginateAsync(request.GetPagNumber(),
+                request.GetItemsPeerPage());
+            response.Data = items.GetResponsePaginationList(mapper.Map<List<BookCollectionDto>>(items.Items));
+        }
+        catch (AppException exception)
+        {
+            response.StatusCode = exception.ErrorCode;
+            response.Errors.Add(exception.ErrorTitle, exception.Message);
+        }
+        catch (Exception exception)
+        {
+            if (!hostingEnvironment.IsProduction())
+            {
+                response.StatusCode = 500;
+                response.Errors.Add("server error", exception.Message);
+            }
+
+            Console.WriteLine($"Error, Message {exception.Message}");
+        }
+
+        return response;
+    }
+
+    public async Task<ApiResponse<List<ListItem<string>>>> List(string? searchQuery = null,
+        Dictionary<string, object>? args = null)
+    {
+        var response = new ApiResponse<List<ListItem<string>>>();
+        try
+        {
+            var records = GetFilterQuery(
+                GetQuery().Where(r => r.IsActive),
+                searchQuery, args);
+            response.Data = await records
+                .Select(r => new ListItem<string>
+                {
+                    Id = r.Id,
+                    Content = r.Title,
+                }).ToListAsync();
+        }
+        catch (AppException exception)
+        {
+            response.StatusCode = exception.ErrorCode;
+            response.Errors.Add(exception.ErrorTitle, exception.Message);
+        }
+        catch (Exception exception)
+        {
+            if (!hostingEnvironment.IsProduction())
+            {
+                response.StatusCode = 500;
+                response.Errors.Add("server error", exception.Message);
+            }
+
+            Console.WriteLine($"Error, Message {exception.Message}");
+        }
+
+        return response;
+    }
+
+    public async Task<ApiResponse<BookCollectionDto>> Get(string id)
+    {
+        var response = new ApiResponse<BookCollectionDto>();
+        try
+        {
+            var record = await GetRecord(id);
+            response.Data = mapper.Map<BookCollectionDto>(record);
+            return response;
+        }
+        catch (AppException exception)
+        {
+            response.StatusCode = exception.ErrorCode;
+            response.Errors.Add(exception.ErrorTitle, exception.Message);
+        }
+        catch (Exception exception)
+        {
+            if (!hostingEnvironment.IsProduction())
+            {
+                response.StatusCode = 500;
+                response.Errors.Add("server error", exception.Message);
+            }
+
+            Console.WriteLine($"Error, Message {exception.Message}");
+        }
+
+        return response;
+    }
+
+    public async Task ModifyValidation(BookCollection record, ModifyBookCollectionDto request)
+    {
+        if (record.OwnerId != request.OwnerId &&
+            await context.Users.AllAsync(r => r.Id != request.OwnerId))
+        {
+            throw new AppException("user is not found",
+                101, nameof(request.OwnerId));
+        }
+        
+        if (record.Title != request.Title &&
+            await context.BookCollections.AnyAsync(r => r.Title == request.Title 
+                                                        && r.OwnerId == request.OwnerId))
+        {
+            throw new AppException("this user already hase collection with same name",
+                101, nameof(request.Title));
+        }
+    }
+
+    public async Task<ApiResponse<ToModifyBookCollectionDto>> PrepareModification(string? id = null)
+    {
+        var response = new ApiResponse<ToModifyBookCollectionDto>();
+        try
+        {
+            response.Data = new();
+
+            if (string.IsNullOrEmpty(id))
+                return response;
+
+            var record = await GetRecord(id);
+            response.Data.Data = mapper.Map<ModifyBookCollectionDto>(record);
+
+            return response;
+        }
+        catch (AppException exception)
+        {
+            response.StatusCode = exception.ErrorCode;
+            response.Errors.Add(exception.ErrorTitle, exception.Message);
+        }
+        catch (Exception exception)
+        {
+            if (!hostingEnvironment.IsProduction())
+            {
+                response.StatusCode = 500;
+                response.Errors.Add("server error", exception.Message);
+            }
+
+            Console.WriteLine($"Error, Message {exception.Message}");
+        }
+
+        return response;
+    }
+
+        public async Task<ApiResponse<BookCollectionDto>> Create(ModifyBookCollectionDto request)
+    {
+        var response = new ApiResponse<BookCollectionDto>();
+        try
+        {
+            await ModifyValidation(new BookCollection(), request);
+
+            var record = mapper.Map<BookCollection>(request);
+            record.Id = Ghak.libraries.AppBase.Utils.Helpers.GetStringKey();
+
+            await context.BookCollections.AddAsync(record);
+
+            if (!await SaveDbChange())
+                throw new AppException("there is some issue when try to Book Collection record at database", 101);
+
+
+            return await Get(record.Id);
+        }
+        catch (AppException exception)
+        {
+            response.StatusCode = exception.ErrorCode;
+            response.Errors.Add(exception.ErrorTitle, exception.Message);
+        }
+        catch (Exception exception)
+        {
+            if (!hostingEnvironment.IsProduction())
+            {
+                response.StatusCode = 500;
+                response.Errors.Add("server error", exception.Message);
+            }
+
+            Console.WriteLine($"Error, Message {exception.Message}");
+        }
+
+        return response;
+    }
+
+    public async Task<ApiResponse<BookCollectionDto>> Update(ModifyBookCollectionDto request)
+    {
+        var response = new ApiResponse<BookCollectionDto>();
+        try
+        {
+            if (string.IsNullOrEmpty(request.Id))
+            {
+                throw new AppException("Id Is Required",
+                    101,
+                    nameof(request.Id));
+            }
+
+            var record = await GetRecord(request.Id);
+
+            await ModifyValidation(record, request);
+
+            record.UpdatedAt = DateTime.Now;
+            record.Title = request.Title;
+            record.OwnerId = request.OwnerId;
+            record.Description = request.Description;
+
+            await SaveDbChange();
+
+            return await Get(record.Id);
+        }
+        catch (AppException exception)
+        {
+            response.StatusCode = exception.ErrorCode;
+            response.Errors.Add(exception.ErrorTitle, exception.Message);
+        }
+        catch (Exception exception)
+        {
+            if (!hostingEnvironment.IsProduction())
+            {
+                response.StatusCode = 500;
+                response.Errors.Add("server error", exception.Message);
+            }
+
+            Console.WriteLine($"Error, Message {exception.Message}");
+        }
+
+        return response;
+    }
+
+    public async Task<ApiResponse<bool>> UpdateActivation(string identifier)
+    {
+        var response = new ApiResponse<bool>();
+        try
+        {
+            var record = await GetRecord(identifier);
+
+            record.IsActive = !record.IsActive;
+            record.UpdatedAt = DateTime.Now;
+
+            if (!await SaveDbChange())
+                throw new AppException("there is some issue when try to BookCollection record on database", 101);
+
+            response.Data = true;
+            return response;
+        }
+        catch (AppException exception)
+        {
+            response.StatusCode = exception.ErrorCode;
+            response.Errors.Add(exception.ErrorTitle, exception.Message);
+        }
+        catch (Exception exception)
+        {
+            if (!hostingEnvironment.IsProduction())
+            {
+                response.StatusCode = 500;
+                response.Errors.Add("server error", exception.Message);
+            }
+
+            Console.WriteLine($"Error, Message {exception.Message}");
+        }
+
+        return response;
+    }
+
+    public async Task<ApiResponse<bool>> Delete(string id)
+    {
+        var response = new ApiResponse<bool>();
+        try
+        {
+            var record = await GetRecord(id);
+            record.DeletedAt = DateTime.Now;
+            response.Data = true;
+            await SaveDbChange();
+        }
+        catch (AppException exception)
+        {
+            response.StatusCode = exception.ErrorCode;
+            response.Errors.Add(exception.ErrorTitle, exception.Message);
+        }
+        catch (Exception exception)
+        {
+            if (!hostingEnvironment.IsProduction())
+            {
+                response.StatusCode = 500;
+                response.Errors.Add("server error", exception.Message);
+            }
+
+            Console.WriteLine($"Error, Message {exception.Message}");
+        }
+
+        return response;
+    }
+
+    public async Task<bool> SaveDbChange()
+    {
+        var res = await context.SaveChangesAsync();
+        if (res > 0)
+        {
+            Console.WriteLine($"{res} changes was made on Book Collections database table");
+            return true;
+        }
+
+        Console.WriteLine("no change was made on Units database table");
+        return false;
+    }
+}
+```
+
+then register it inside AppRegistrations.cs inside RepositoriesRegistration method
+```
+...
+        services.AddScoped<IBookCollectionsRepository, BookCollectionsRepository>();
+...
+```
+
+the last step for this endpoints is to add it to controller, create `BookCollectionsController` inside Controllers folder
+```
+using Ghak.libraries.AppBase.Models;
+using Ghak.libraries.AppBase.Utils;
+using Microsoft.AspNetCore.Mvc;
+using TheBooks.Api.Dto.BookCollections;
+using TheBooks.Api.Repositories.BookCollections;
+
+namespace TheBooks.Api.Controllers;
+
+[Microsoft.AspNetCore.Components.Route("api/[controller]")]
+public class BookCollectionsController(IBookCollectionsRepository repository) 
+    : BaseAuthControllers
+{
+    [HttpPost("books-collections-pagination")]
+    public async Task<ActionResult<ApiResponse<PaginationList<BookCollectionDto>>>> Pagination(PaginationListArgs request)
+    {
+        return await repository.Pagination(request);
+    }
+
+    [HttpPost("books-collections-list")]
+    public async Task<ActionResult<ApiResponse<List<ListItem<string>>>>> List(string? searchQuery = null,
+        Dictionary<string, object>? args = null)
+    {
+        return await repository.List(searchQuery, args);
+    }
+
+
+    [HttpPost("create-book-collection")]
+    public async Task<ActionResult<ApiResponse<BookCollectionDto>>> Create(ModifyBookCollectionDto request)
+    {
+        return await repository.Create(request);
+    }
+
+
+    [HttpGet("get-book-collection")]
+    public async Task<ActionResult<ApiResponse<BookCollectionDto>>> Get(string id)
+    {
+        return await repository.Get(id);
+    }
+
+    [HttpGet("get-book-collection-to-modify")]
+    public async Task<ActionResult<ApiResponse<ToModifyBookCollectionDto>>> InitRecordModification(string? id = null)
+    {
+        return await repository.PrepareModification(id);
+    }
+
+    [HttpPut("update-book-collection")]
+    public async Task<ActionResult<ApiResponse<BookCollectionDto>>> Update(ModifyBookCollectionDto request)
+    {
+        return await repository.Update(request);
+    }
+
+    [HttpPut("update-book-collection-activation")]
+    public async Task<ActionResult<ApiResponse<bool>>> UpdateActivation(string id)
+    {
+        return await repository.UpdateActivation(id);
+    }
+
+    [HttpDelete("delete-book-collection")]
+    public async Task<ActionResult<ApiResponse<bool>>> Delete(string id)
+    {
+        return await repository.Delete(id);
+    }
+}
+```
