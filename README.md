@@ -1686,7 +1686,14 @@ the last change is to add make `OwnerId` on  `ModifyBookCollectionDto` accept nu
 public string? OwnerId { get; set; }
 ```
 
-
+in same way of creation book collection we create books in next steps:
+- create Book Model
+- create Book DTO [BookDto, ModifyBookDto, ToModifyDto]
+- create BookMapperProfile
+- add Books as table in AppDbContext and create migration and update database
+- create repository [IBookRepository, BookRepository]
+- register repository in AppBookRepositoriesRegistration
+- create controllers BooksController
 
 
    

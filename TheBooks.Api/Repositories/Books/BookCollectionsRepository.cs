@@ -5,27 +5,27 @@ using Ghak.libraries.AppBase.Models;
 using Ghak.libraries.AppBase.Utils;
 using Microsoft.EntityFrameworkCore;
 using TheBooks.Api.Data;
-using TheBooks.Api.Dto.BookCollections;
+using TheBooks.Api.Dto.Books;
 using TheBooks.Api.Model;
 using TheBooks.Api.Services.Auth;
 
-namespace TheBooks.Api.Repositories.BookCollections;
+namespace TheBooks.Api.Repositories.Books;
 
-public class BookCollectionsRepository(AppDbContext context,
-    IMapper mapper,
-    IHostEnvironment hostingEnvironment,
-    IAuthUserServices authUserServices) 
-    : IBookCollectionsRepository
+public class BooksRepository(AppDbContext context,
+        IMapper mapper,
+        IHostEnvironment hostingEnvironment,
+        IAuthUserServices authUserServices)
+    : IBooksRepository
 {
-    public IQueryable<BookCollection> GetQuery()
+    public IQueryable<Book> GetQuery()
     {
-        return context.BookCollections
+        return context.Books
             .Include(r => r.Owner)
             .OrderByDescending(r => r.CreatedAt)
             .AsQueryable();
     }
 
-    public IQueryable<BookCollection> GetFilterQuery(IQueryable<BookCollection> query, string? searchQuery = null,
+    public IQueryable<Book> GetFilterQuery(IQueryable<Book> query, string? searchQuery = null,
         Dictionary<string, object>? filters = null)
     {
         if (!string.IsNullOrWhiteSpace(searchQuery))
@@ -52,27 +52,27 @@ public class BookCollectionsRepository(AppDbContext context,
         return query;
     }
 
-    public async Task<BookCollection> GetRecord(string id)
+    public async Task<Book> GetRecord(string id)
     {
         var record = await GetQuery()
             .FirstOrDefaultAsync(r => r.Id == id);
         if (record == null)
             throw new AppException("record is not found",
                 404,
-                nameof(BookCollection));
+                nameof(Book));
 
         return record;
     }
 
-    public async Task<ApiResponse<PaginationList<BookCollectionDto>>> Pagination(PaginationListArgs request)
+    public async Task<ApiResponse<PaginationList<BookDto>>> Pagination(PaginationListArgs request)
     {
-        var response = new ApiResponse<PaginationList<BookCollectionDto>>();
+        var response = new ApiResponse<PaginationList<BookDto>>();
         try
         {
             var list = GetFilterQuery(GetQuery(), request.SearchQuery, request.Args);
             var items = await list.PaginateAsync(request.GetPagNumber(),
                 request.GetItemsPeerPage());
-            response.Data = items.GetResponsePaginationList(mapper.Map<List<BookCollectionDto>>(items.Items));
+            response.Data = items.GetResponsePaginationList(mapper.Map<List<BookDto>>(items.Items));
         }
         catch (AppException exception)
         {
@@ -107,6 +107,14 @@ public class BookCollectionsRepository(AppDbContext context,
                 {
                     Id = r.Id,
                     Content = r.Title,
+                    Data = new Dictionary<string, object>()
+                    {
+                        { "OwnerId", r.OwnerId },
+                        { "Title", r.Title },
+                        { "Description", r.Description ?? "" },
+                        { "ISBN", r.ISBN ?? "" },
+                        { "Language", r.Language ?? "" },
+                    }
                 }).ToListAsync();
         }
         catch (AppException exception)
@@ -128,13 +136,13 @@ public class BookCollectionsRepository(AppDbContext context,
         return response;
     }
 
-    public async Task<ApiResponse<BookCollectionDto>> Get(string id)
+    public async Task<ApiResponse<BookDto>> Get(string id)
     {
-        var response = new ApiResponse<BookCollectionDto>();
+        var response = new ApiResponse<BookDto>();
         try
         {
             var record = await GetRecord(id);
-            response.Data = mapper.Map<BookCollectionDto>(record);
+            response.Data = mapper.Map<BookDto>(record);
             return response;
         }
         catch (AppException exception)
@@ -156,36 +164,41 @@ public class BookCollectionsRepository(AppDbContext context,
         return response;
     }
 
-    public async Task ModifyValidation(BookCollection record, ModifyBookCollectionDto request)
+    public async Task ModifyValidation(Book record, ModifyBookDto request)
     {
-        if (string.IsNullOrEmpty(request.OwnerId) || (record.OwnerId != request.OwnerId &&
-            await context.Users.AllAsync(r => r.Id != request.OwnerId)))
+        if (string.IsNullOrEmpty(request.OwnerId) ||
+            (record.OwnerId != request.OwnerId &&
+             await context.Users.AllAsync(r => r.Id != request.OwnerId)))
         {
             throw new AppException("user is not found",
                 101, nameof(request.OwnerId));
         }
-        
-        if (record.Title != request.Title &&
-            await context.BookCollections.AnyAsync(r => r.Title == request.Title 
-                                                        && r.OwnerId == request.OwnerId))
+
+        if (!string.IsNullOrEmpty(request.BookCollectionId) &&
+            (record.BookCollectionId != request.BookCollectionId &&
+             await context.BookCollections.AllAsync(r =>
+                 r.Id != request.BookCollectionId)))
         {
-            throw new AppException("this user already hase collection with same name",
-                101, nameof(request.Title));
+            throw new AppException("Books Collection is not found",
+                101, nameof(request.BookCollectionId));
         }
     }
 
-    public async Task<ApiResponse<ToModifyBookCollectionDto>> PrepareModification(string? id = null)
+    public async Task<ApiResponse<ToModifyBookDto>> PrepareModification(string? id = null)
     {
-        var response = new ApiResponse<ToModifyBookCollectionDto>();
+        var response = new ApiResponse<ToModifyBookDto>();
         try
         {
-            response.Data = new();
+            response.Data = new()
+            {
+                 Types = Ghak.libraries.AppBase.Utils.Helpers.GetEnumAsListItems<BookType>()
+            };
 
             if (string.IsNullOrEmpty(id))
                 return response;
 
             var record = await GetRecord(id);
-            response.Data.Data = mapper.Map<ModifyBookCollectionDto>(record);
+            response.Data.Data = mapper.Map<ModifyBookDto>(record);
 
             return response;
         }
@@ -208,18 +221,18 @@ public class BookCollectionsRepository(AppDbContext context,
         return response;
     }
 
-        public async Task<ApiResponse<BookCollectionDto>> Create(ModifyBookCollectionDto request)
+    public async Task<ApiResponse<BookDto>> Create(ModifyBookDto request)
     {
-        var response = new ApiResponse<BookCollectionDto>();
+        var response = new ApiResponse<BookDto>();
         try
         {
             request.OwnerId = await authUserServices.Id();
-            await ModifyValidation(new BookCollection(), request);
-            
-            var record = mapper.Map<BookCollection>(request);
+            await ModifyValidation(new Book(), request);
+
+            var record = mapper.Map<Book>(request);
             record.Id = Ghak.libraries.AppBase.Utils.Helpers.GetStringKey();
 
-            await context.BookCollections.AddAsync(record);
+            await context.Books.AddAsync(record);
 
             if (!await SaveDbChange())
                 throw new AppException("there is some issue when try to Book Collection record at database", 101);
@@ -246,9 +259,9 @@ public class BookCollectionsRepository(AppDbContext context,
         return response;
     }
 
-    public async Task<ApiResponse<BookCollectionDto>> Update(ModifyBookCollectionDto request)
+    public async Task<ApiResponse<BookDto>> Update(ModifyBookDto request)
     {
-        var response = new ApiResponse<BookCollectionDto>();
+        var response = new ApiResponse<BookDto>();
         try
         {
             if (string.IsNullOrEmpty(request.Id))
@@ -265,6 +278,11 @@ public class BookCollectionsRepository(AppDbContext context,
             record.UpdatedAt = DateTime.Now;
             record.Title = request.Title;
             record.Description = request.Description;
+            record.ISBN = request.ISBN;
+            record.Language = request.Language;
+            record.BookCollectionId = request.BookCollectionId;
+            record.Types = request.Types;
+            
 
             await SaveDbChange();
 
@@ -300,7 +318,7 @@ public class BookCollectionsRepository(AppDbContext context,
             record.UpdatedAt = DateTime.Now;
 
             if (!await SaveDbChange())
-                throw new AppException("there is some issue when try to BookCollection record on database", 101);
+                throw new AppException("there is some issue when try to Book record on database", 101);
 
             response.Data = true;
             return response;
@@ -330,8 +348,7 @@ public class BookCollectionsRepository(AppDbContext context,
         try
         {
             var record = await GetRecord(id);
-            record.DeletedAt = DateTime.Now;
-            response.Data = true;
+            record.DeleteSoftly();  
             await SaveDbChange();
         }
         catch (AppException exception)
